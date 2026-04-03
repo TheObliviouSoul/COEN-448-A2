@@ -1,5 +1,4 @@
 #!/bin/bash
-source .env
 echo "Waiting for MongoDB to be ready..."
 # Wait for MongoDB to be ready using Python
 python3 << END
@@ -9,18 +8,13 @@ import sys
 
 try:
     from pymongo import MongoClient
-    from dotenv import load_dotenv
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
 
-# Explicitly load .env file
-dotenv_path = '/app/.env'
-load_dotenv(dotenv_path)
-
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
-    print("MONGO_URI not found in .env file")
+    print("MONGO_URI not found in the container environment")
     sys.exit(1)
 
 MAX_ATTEMPTS = 30

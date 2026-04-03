@@ -4,11 +4,9 @@ FROM python:3.10
 # Set the working directory in the container
 WORKDIR /broken_microservices
 
-# Copy the current directory contents into the container at /app
+# Copy the service and shared code into the container
 COPY user_service_v1/ /broken_microservices/user_service_v1
-COPY shared/config/rabbitmq_config.py /broken_microservices/shared/config/
-COPY shared/config/__init__.py /broken_microservices/shared/config/
-COPY shared/__init__.py /broken_microservices/shared/
+COPY shared/ /broken_microservices/shared
 
 # Add a dummy __init__.py file to ensure the directory is treated as a package
 # RUN touch /broken_microservices/__init__.py

@@ -24,6 +24,7 @@ from flask import request, Flask, current_app
 from flask_restx import Resource, fields
 from bson.objectid import ObjectId
 from order_service.app.models import api, order_model, delivery_address_model
+from shared.validation import ensure_delivery_address, ensure_email_list, ensure_json_object
 
 # The current_app variable is a proxy to the Flask application handling the request.
 current_app: Flask
@@ -35,7 +36,7 @@ class OrderList(Resource):
     """
 
     @api.expect(order_model)
-    @api.marshal_with(order_model, code=201)
+    @api.marshal_with(order_model, code=201, skip_none=True)
     def post(self) -> tuple:
         """
         Handles the HTTP POST request to create a new order.
@@ -56,7 +57,10 @@ class OrderList(Resource):
                                                present, or email addresses already exist.
         """
 
-        data: dict = request.json
+        try:
+            data = ensure_json_object(request.get_json(silent=True))
+        except ValueError as exc:
+            api.abort(400, str(exc))
 
         # Ensure no other fields are present
         allowed_fields: set = {'items', 'userEmails', 'deliveryAddress', 'orderStatus',
@@ -67,30 +71,42 @@ class OrderList(Resource):
 
         if 'items' not in data or not data['items']:
             api.abort(400, 'items is a required field')
-        if 'userEmails' not in data or not data['userEmails']:
+        if 'userEmails' not in data:
             api.abort(400, 'userEmails is a required field')
         if 'deliveryAddress' not in data:
             api.abort(400, 'deliveryAddress is a required field')
         if 'orderStatus' not in data:
             api.abort(400, 'orderStatus is a required field')
+        if 'userId' not in data or not data['userId']:
+            api.abort(400, 'userId is a required field')
 
         # Validate items
         for item in data['items']:
             if not isinstance(item, dict):
                 api.abort(400, 'Each item must be an object')
-            required_fields: list = ['itemId', 'quantity', 'price']
-            for field in required_fields:
-                if field not in item or not isinstance(item[field], (str, int, float)):
-                    api.abort(400, f'Each item must contain a valid {field}')
+            if 'itemId' not in item or not isinstance(item['itemId'], str):
+                api.abort(400, 'Each item must contain a valid itemId')
+            if ('quantity' not in item or type(item['quantity']) is not int
+                    or item['quantity'] < 1):
+                api.abort(400, 'Each item must contain a valid quantity')
+            if ('price' not in item or not isinstance(item['price'], (int, float))
+                    or isinstance(item['price'], bool)
+                    or item['price'] < 0):
+                api.abort(400, 'Each item must contain a valid price')
+            item['price'] = float(item['price'])
 
-        # Validate deliveryAddress
-        delivery_address: dict = data['deliveryAddress']
-        required_fields: list = ['street', 'city', 'state', 'postalCode', 'country']
-        if not isinstance(delivery_address, dict):
-            api.abort(400, 'deliveryAddress must be an object')
-        for field in required_fields:
-            if field not in delivery_address or not isinstance(delivery_address[field], str):
-                api.abort(400, f'deliveryAddress must contain a valid {field}')
+        try:
+            ensure_email_list(data['userEmails'], 'userEmails')
+            ensure_delivery_address(data['deliveryAddress'])
+        except ValueError as exc:
+            api.abort(400, str(exc))
+
+        users_collection = current_app.users_collection
+        user: dict = users_collection.find_one({'userId': data['userId']})
+        if not user:
+            api.abort(400, 'userId must reference an existing user')
+        if data['userEmails'] != user['emails'] or data['deliveryAddress'] != user['deliveryAddress']:
+            api.abort(400, 'userEmails and deliveryAddress must match the current user profile')
 
         orders_collection = current_app.orders_collection
 
@@ -101,7 +117,7 @@ class OrderList(Resource):
         return order, 201
 
     @api.param('status', 'The status of the orders to retrieve')
-    @api.marshal_with(order_model, as_list=True)
+    @api.marshal_with(order_model, as_list=True, skip_none=True)
     def get(self) -> list:
         """
         Handles the HTTP GET request to retrieve orders by status.
@@ -134,8 +150,8 @@ class OrderStatus(Resource):
         'orderStatus': fields.String(required=True, description='Current status of the order', 
                                      enum=['under process', 'shipping', 'delivered'])
     }))
-    @api.marshal_with(order_model)
-    def put(self) -> dict:
+    @api.marshal_list_with(order_model, skip_none=True)
+    def put(self, id: str) -> dict:
         """
         Update the status of an existing order based on the provided order ID.
         Args:
@@ -148,7 +164,10 @@ class OrderStatus(Resource):
             HTTPException: If the order with the given ID is not found.
         """
 
-        data: dict = request.json
+        try:
+            data = ensure_json_object(request.get_json(silent=True))
+        except ValueError as exc:
+            api.abort(400, str(exc))
 
         if 'orderStatus' not in data or data['orderStatus'] not in ['under process',
                                                                     'shipping', 'delivered']:
@@ -177,8 +196,8 @@ class OrderDetails(Resource):
         'deliveryAddress': fields.Nested(delivery_address_model, description=
                                          'The delivery address of the user')
     }))
-    @api.marshal_with(order_model)
-    def put(self) -> dict:
+    @api.marshal_list_with(order_model, skip_none=True)
+    def put(self, id: str) -> dict:
         """
         Update the emails or delivery address of an existing order based on the provided 
         order ID.
@@ -195,7 +214,10 @@ class OrderDetails(Resource):
             HTTPException: If the order with the given ID is not found.
         """
 
-        data: dict = request.json
+        try:
+            data = ensure_json_object(request.get_json(silent=True))
+        except ValueError as exc:
+            api.abort(400, str(exc))
 
         # Ensure no other fields are present
         allowed_fields: set = {'userEmails', 'deliveryAddress'}
@@ -208,20 +230,17 @@ class OrderDetails(Resource):
 
         # Validate userEmails
         if 'userEmails' in data:
-            if not isinstance(data['userEmails'], list) or not all(isinstance(email, str)
-                                                                   and '@' in email for email
-                                                                   in data['userEmails']):
-                api.abort(400, 'userEmails must be an array of valid email addresses')
+            try:
+                ensure_email_list(data['userEmails'], 'userEmails')
+            except ValueError as exc:
+                api.abort(400, str(exc))
 
         # Validate deliveryAddress
         if 'deliveryAddress' in data:
-            delivery_address: dict = data['deliveryAddress']
-            required_fields: list = ['street', 'city', 'state', 'postalCode', 'country']
-            if not isinstance(delivery_address, dict):
-                api.abort(400, 'deliveryAddress must be an object')
-            for field in required_fields:
-                if field not in delivery_address or not isinstance(delivery_address[field], str):
-                    api.abort(400, f'deliveryAddress must contain a valid {field}')
+            try:
+                ensure_delivery_address(data['deliveryAddress'])
+            except ValueError as exc:
+                api.abort(400, str(exc))
 
         orders_collection = current_app.orders_collection
         old_order: dict = orders_collection.find_one({'orderId': id})

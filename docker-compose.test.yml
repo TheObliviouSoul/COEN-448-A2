@@ -22,7 +22,7 @@ services:
     depends_on:
       - mongodb
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     links:
       - mongodb
     networks:
@@ -46,6 +46,8 @@ services:
     ports:
       - "5001:5000"
     depends_on:
+      mongodb-setup:
+          condition: service_completed_successfully
       rabbitmq:
           condition: service_healthy
     networks:
@@ -69,6 +71,8 @@ services:
     ports:
       - "5002:5000"
     depends_on:
+      mongodb-setup:
+          condition: service_completed_successfully
       rabbitmq:
           condition: service_healthy
     networks:
@@ -92,6 +96,8 @@ services:
     ports:
       - "5003:5000"
     depends_on:
+      mongodb-setup:
+          condition: service_completed_successfully
       rabbitmq:
           condition: service_healthy
     networks:
@@ -102,17 +108,16 @@ services:
     container_name: rabbitmq-container
     hostname: rabbitmq
     ports:
-      - "5673:5673" # RabbitMQ messaging port
+      - "5673:5672" # RabbitMQ messaging port exposed on the host
       - "15672:15672" # RabbitMQ management UI
     expose:
-      - 5673
+      - 5672
       - 15672
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
-      RABBITMQ_NODE_PORT: 5673 # had to change the default port because of a conflict with the mongodb port 
     healthcheck:
-      test: rabbitmq-diagnostics check_port_connectivity
+      test: rabbitmq-diagnostics ping
       interval: 10s
       timeout: 30s
       retries: 3
@@ -128,7 +133,7 @@ services:
       args: 
         - P_VAL=${P_VALUE}
     env_file: 
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       - KONG_DATABASE=off
       - KONG_DECLARATIVE_CONFIG=/etc/kong/kong.yml

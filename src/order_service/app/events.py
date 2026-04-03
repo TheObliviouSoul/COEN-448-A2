@@ -8,9 +8,11 @@ Author:
 
 import os
 import json
+import time
 from typing import Any, Dict, List, Optional
 from flask import current_app
 from dotenv import load_dotenv
+from pika.exceptions import AMQPError
 from shared.config.rabbitmq_config import create_channel
 
 load_dotenv()
@@ -41,8 +43,6 @@ def consume_user_update_events() -> None:
         Any exceptions raised during the processing of messages will be propagated.
     """
 
-    channel, connection = create_channel(QUEUE_NAME)
-
     def callback(ch: Any, method: Any, properties: Any, body: bytes) -> None:
         event = json.loads(body)
 
@@ -65,5 +65,27 @@ def consume_user_update_events() -> None:
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    channel.basic_consume(queue=QUEUE_NAME, on_message_callback=callback, auto_ack=False)
-    channel.start_consuming()
+    while True:
+        connection = None
+        try:
+            channel, connection = create_channel(QUEUE_NAME)
+            channel.basic_consume(
+                queue=QUEUE_NAME,
+                on_message_callback=callback,
+                auto_ack=False,
+            )
+            channel.start_consuming()
+        except AMQPError as exc:
+            current_app.logger.warning(
+                "RabbitMQ consumer unavailable, retrying in 5 seconds: %s",
+                exc,
+            )
+            time.sleep(5)
+        except Exception:
+            current_app.logger.exception(
+                "RabbitMQ consumer crashed, retrying in 5 seconds",
+            )
+            time.sleep(5)
+        finally:
+            if connection and connection.is_open:
+                connection.close()

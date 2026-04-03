@@ -56,6 +56,7 @@ def create_app() -> Flask:
     app.mongo_client = mongo_client
     app.db = mongo_client[app.config['DATABASE_NAME']]
     app.orders_collection = app.db['orders']
+    app.users_collection = app.db['users']
 
     # Start the event consumer in a separate thread
     event_consumer_thread = threading.Thread(target=start_event_consumer, args=(app,), daemon=True)

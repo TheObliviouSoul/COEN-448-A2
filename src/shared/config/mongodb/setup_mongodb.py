@@ -114,7 +114,7 @@ def setup_orders_collection() -> None:
 
     order_schema: dict = {
         "bsonType": "object",
-        "required": ["orderId", "items", "userEmails", "deliveryAddress", "orderStatus"],
+        "required": ["orderId", "userId", "items", "userEmails", "deliveryAddress", "orderStatus"],
         "properties": {
             "orderId": {"bsonType": "string"},
             "userId": {"bsonType": "string"},
@@ -126,7 +126,10 @@ def setup_orders_collection() -> None:
                     "properties": {
                         "itemId": {"bsonType": "string"},
                         "quantity": {"bsonType": "int", "minimum": 1},
-                        "price": {"bsonType": "double", "minimum": 0}
+                        "price": {
+                            "bsonType": ["double", "int", "long", "decimal"],
+                            "minimum": 0
+                        }
                     }
                 }
             },

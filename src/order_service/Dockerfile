@@ -4,11 +4,9 @@ FROM python:3.10
 # Set the working directory in the container
 WORKDIR /aware_microservices
 
-# Copy the current directory contents into the container at /app
+# Copy the service and shared code into the container
 COPY order_service/ /aware_microservices/order_service
-COPY shared/config/rabbitmq_config.py /aware_microservices/shared/config/
-COPY shared/config/__init__.py /aware_microservices/shared/config/
-COPY shared/__init__.py /aware_microservices/shared/
+COPY shared/ /aware_microservices/shared
 
 # Add a dummy __init__.py file to ensure the directory is treated as a package
 # RUN touch /aware_microservices/__init__.py

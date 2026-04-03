@@ -7,6 +7,7 @@ Author:
 
 import os
 import json
+import pika
 from flask import current_app
 from dotenv import load_dotenv
 from shared.config.rabbitmq_config import create_channel
@@ -31,13 +32,14 @@ def publish_user_update_event(user_id: int, email: str, address: str) -> None:
         'userEmails': email,
         'deliveryAddress': address
     }
-    channel.basic_publish(
-        exchange="user_order",
-        routing_key=QUEUE_NAME,
-        body=json.dumps(event)
-        # properties=pika.BasicProperties(
-        #     delivery_mode=2,  # Make the message persistent
-        # )
-    )
-    print(f"V2 Published event: {event}", flush=True)
-    connection.close()
+    try:
+        channel.basic_publish(
+            exchange="user_order",
+            routing_key=QUEUE_NAME,
+            body=json.dumps(event),
+            properties=pika.BasicProperties(delivery_mode=2),
+        )
+        print(f"V2 Published event: {event}", flush=True)
+    finally:
+        if connection.is_open:
+            connection.close()

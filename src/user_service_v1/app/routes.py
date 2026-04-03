@@ -13,11 +13,12 @@ Functions:
 """
 
 from flask import request, Flask, current_app
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Resource
 from bson.objectid import ObjectId
 import uuid
 from user_service_v1.app.models import api, user_model, delivery_address_model
 from user_service_v1.app.events import publish_user_update_event
+from shared.validation import ensure_delivery_address, ensure_email_list, ensure_json_object
 
 # The current_app variable is a proxy to the Flask application handling the request.
 current_app : Flask
@@ -25,7 +26,7 @@ current_app : Flask
 @api.route('/')
 class UserList(Resource):
     @api.expect(user_model)
-    @api.marshal_with(user_model, code=201)
+    @api.marshal_with(user_model, code=201, skip_none=True)
     def post(self) -> tuple:
         """
         Handles the HTTP POST request to create a new user.
@@ -46,9 +47,9 @@ class UserList(Resource):
         """
 
         try:
-            data: dict = request.json
-        except Exception as e:
-            api.abort(400, f'Invalid JSON data: {str(e)}')
+            data = ensure_json_object(request.get_json(silent=True))
+        except ValueError as exc:
+            api.abort(400, str(exc))
         
         # Ensure no other fields are present
         allowed_fields = {'emails', 'deliveryAddress', 'firstName', 'lastName', 'phoneNumber', 'createdAt', 'updatedAt'}
@@ -56,20 +57,16 @@ class UserList(Resource):
             if field not in allowed_fields:
                 api.abort(400, f'Invalid field: {field}')
         
-        if 'emails' not in data or not data['emails']:
+        if 'emails' not in data:
             api.abort(400, 'emails is a required field')
         if 'deliveryAddress' not in data:
             api.abort(400, 'deliveryAddress is a required field')
-        
-                # Validate deliveryAddress
-        if 'deliveryAddress' in data:
-            delivery_address = data['deliveryAddress']
-            required_fields = ['street', 'city', 'state', 'postalCode', 'country']
-            if not isinstance(delivery_address, dict):
-                api.abort(400, 'deliveryAddress must be an object')
-            for field in required_fields:
-                if field not in delivery_address or not isinstance(delivery_address[field], str):
-                    api.abort(400, f'deliveryAddress must contain a valid {field}')
+
+        try:
+            ensure_email_list(data['emails'], 'emails')
+            ensure_delivery_address(data['deliveryAddress'])
+        except ValueError as exc:
+            api.abort(400, str(exc))
                     
         users_collection = current_app.users_collection
         # Check if any of the emails already exist in the database
@@ -87,8 +84,26 @@ class UserList(Resource):
 @api.route('/<string:id>')
 @api.response(404, 'User not found')
 class User(Resource):
+    @api.marshal_with(user_model, skip_none=True)
+    def get(self, id: str) -> dict:
+        """
+        Retrieve a user by user ID.
+        Args:
+            id (str): The unique identifier of the user.
+        Returns:
+            dict: The requested user document.
+        Raises:
+            HTTPException: If the user with the given ID is not found.
+        """
+
+        users_collection = current_app.users_collection
+        user = users_collection.find_one({'userId': id})
+        if not user:
+            api.abort(404, "User not found")
+        return user
+
     @api.expect(user_model)
-    @api.marshal_with(user_model)
+    @api.marshal_list_with(user_model, skip_none=True)
     def put(self, id: str) -> dict:
         """
         Update user information based on the provided user ID.
@@ -106,9 +121,9 @@ class User(Resource):
         """
 
         try:
-            data: dict = request.json
-        except Exception as e:
-            api.abort(400, f'Invalid JSON data: {str(e)}')
+            data = ensure_json_object(request.get_json(silent=True))
+        except ValueError as exc:
+            api.abort(400, str(exc))
         
         # Ensure no other fields are present
         allowed_fields = {'emails', 'deliveryAddress'}
@@ -121,23 +136,30 @@ class User(Resource):
         
         # Validate emails
         if 'emails' in data:
-            if not isinstance(data['emails'], list) or not all(isinstance(email, str) and '@' in email for email in data['emails']):
-                api.abort(400, 'emails must be an array of valid email addresses')
+            try:
+                ensure_email_list(data['emails'], 'emails')
+            except ValueError as exc:
+                api.abort(400, str(exc))
 
         # Validate deliveryAddress
         if 'deliveryAddress' in data:
-            delivery_address = data['deliveryAddress']
-            required_fields = ['street', 'city', 'state', 'postalCode', 'country']
-            if not isinstance(delivery_address, dict):
-                api.abort(400, 'deliveryAddress must be an object')
-            for field in required_fields:
-                if field not in delivery_address or not isinstance(delivery_address[field], str):
-                    api.abort(400, f'deliveryAddress must contain a valid {field}')
+            try:
+                ensure_delivery_address(data['deliveryAddress'])
+            except ValueError as exc:
+                api.abort(400, str(exc))
         
         users_collection = current_app.users_collection
         old_user = users_collection.find_one({'userId': id})
         if not old_user:
             api.abort(404, "User not found")
+
+        if 'emails' in data:
+            existing_user = users_collection.find_one({
+                'userId': {'$ne': id},
+                'emails': {'$in': data['emails']},
+            })
+            if existing_user:
+                api.abort(400, 'One or more email addresses are already in use')
 
         users_collection.update_one({'userId': id}, {'$set': data})
         new_user: dict = users_collection.find_one({'userId': id})
